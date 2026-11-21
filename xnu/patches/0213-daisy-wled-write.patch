@@ -1,0 +1,94 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -137,6 +137,7 @@
+ static int daisy_rpm_diag, daisy_reports, daisy_trace, daisy_busywait;
+ static int daisy_hid;
+ static int daisy_wled;
++static int daisy_wled_write;
+ static uint32_t qup_last_bus_error, qup_last_error;
+ 
+ static uint32_t
+@@ -1512,6 +1513,52 @@
+ 	printf("VINCE INPUT: press_power: key 0 held %u ms at %u s and %u s\n", press_ms, seconds, seconds + 10);
+ }
+ 
++/* Escritura opt-in del brillo del WLED (daisywledw=1, requiere daisywled=1). Un solo intento por arranque. */
++#define WLED_ARB_CHNLS      0x02400000u
++#define WLED_CMD            0x00u
++#define WLED_STATUS         0x08u
++#define WLED_WDATA0         0x10u
++#define WLED_OP_EXT_WRITEL  0u
++
++static int
++daisy_wled_write(uint16_t ppid, uint8_t reg, uint8_t val)
++{
++	uint16_t apid;
++	vm_offset_t chan;
++	int r = -100;
++
++	if (!spmi_core || !spmi_cnfg) {
++		return -1;
++	}
++	apid = spmi_find_apid(ppid);
++	if (apid == NO_APID) {
++		return -2;
++	}
++	if ((in_rd(spmi_cnfg, 0x700u + 4u * apid) & 7u) != 0) {
++		return -3;  /* el propietario no es el procesador de aplicaciones */
++	}
++	chan = ml_io_map(WLED_ARB_CHNLS + 0x8000u * apid, 0x1000);
++	if (!chan) {
++		return -4;
++	}
++	*(volatile uint32_t *)(chan + WLED_WDATA0) = val;
++	*(volatile uint32_t *)(chan + WLED_CMD) = (WLED_OP_EXT_WRITEL << 27) | ((uint32_t)reg << 4);
++	for (unsigned k = 0; k < 10000; k++) {
++		uint32_t st = *(volatile uint32_t *)(chan + WLED_STATUS);
++
++		if (st & 0xE) {
++			r = -(int)st;
++			break;
++		}
++		if (st & 1) {
++			r = 0;
++			break;
++		}
++		in_sleep(&touch_chan, 1);
++	}
++	return r;
++}
++
+ /*
+  * daisywled=1: read-only dump of the PMI8950 WLED (SID 3: control page 0xd8, sink page 0xd9) through the
+  * observer channels, with the arbiter owner of each page. Nothing is written. It runs from its own thread
+@@ -1524,7 +1571,7 @@
+ {
+ 	static const struct { uint16_t ppid; uint8_t lo, hi; } rng[] = {
+ 		{ 0x3d8, 0x00, 0x08 }, { 0x3d8, 0x40, 0x58 },
+-		{ 0x3d9, 0x00, 0x08 }, { 0x3d9, 0x40, 0x50 }, { 0x3d9, 0x60, 0x80 },
++		{ 0x3d9, 0x00, 0x08 }, { 0x3d9, 0x40, 0x50 }, { 0x3d9, 0x50, 0x60 }, { 0x3d9, 0x60, 0x80 },
+ 	};
+ 	uint16_t last = 0;
+ 
+@@ -1567,6 +1614,12 @@
+ 	(void)arg;
+ 	(void)result;
+ 	in_sleep(&touch_chan, 8000);
++	if (daisy_wled_write) {
++		/* brillo 15 = 241 = 0x0F1: LSB 0xF1 (0xD957), MSB 0x00 (0xD958) */
++		int r1 = daisy_wled_write(0x3d9, 0x57, 0xf1);
++		int r2 = daisy_wled_write(0x3d9, 0x58, 0x00);
++		printf("DAISY WLED WRITE: lsb r%d msb r%d (241/4095)\n", r1, r2);
++	}
+ 	for (unsigned pass = 0; pass < 3; pass++) {
+ 		if (pass) {
+ 			in_sleep(&touch_chan, 25000);
+@@ -1596,6 +1649,7 @@
+ 	(void)PE_parse_boot_argn("daisytouch_diag", &daisy_diag, sizeof(daisy_diag));
+ 	(void)PE_parse_boot_argn("daisytouch_gpio", &daisy_gpio, sizeof(daisy_gpio));
+ 	(void)PE_parse_boot_argn("daisywled", &daisy_wled, sizeof(daisy_wled));
++	(void)PE_parse_boot_argn("daisywledw", &daisy_wled_write, sizeof(daisy_wled_write));
+ 	if (daisy_wled) {
+ 		thread_t wled_thread;
+ 

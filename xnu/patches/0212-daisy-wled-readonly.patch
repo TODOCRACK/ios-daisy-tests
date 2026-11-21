@@ -1,0 +1,110 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -136,6 +136,7 @@
+ static int daisy_diag, daisy_gpio, daisy_power;
+ static int daisy_rpm_diag, daisy_reports, daisy_trace, daisy_busywait;
+ static int daisy_hid;
++static int daisy_wled;
+ static uint32_t qup_last_bus_error, qup_last_error;
+ 
+ static uint32_t
+@@ -1511,6 +1512,71 @@
+ 	printf("VINCE INPUT: press_power: key 0 held %u ms at %u s and %u s\n", press_ms, seconds, seconds + 10);
+ }
+ 
++/*
++ * daisywled=1: read-only dump of the PMI8950 WLED (SID 3: control page 0xd8, sink page 0xd9) through the
++ * observer channels, with the arbiter owner of each page. Nothing is written. It runs from its own thread
++ * 8 s after start and repeats twice, 25 s apart, so the console can be photographed.
++ */
++extern int vince_pmic_read(unsigned ppid, unsigned reg, uint8_t *val);
++
++static void
++daisy_wled_dump(unsigned pass)
++{
++	static const struct { uint16_t ppid; uint8_t lo, hi; } rng[] = {
++		{ 0x3d8, 0x00, 0x08 }, { 0x3d8, 0x40, 0x58 },
++		{ 0x3d9, 0x00, 0x08 }, { 0x3d9, 0x40, 0x50 }, { 0x3d9, 0x60, 0x80 },
++	};
++	uint16_t last = 0;
++
++	for (unsigned i = 0; i < sizeof(rng) / sizeof(rng[0]); i++) {
++		if (rng[i].ppid != last) {
++			uint16_t apid = NO_APID;
++			last = rng[i].ppid;
++			if (spmi_core && spmi_cnfg) {
++				apid = spmi_find_apid(last);
++			}
++			if (apid != NO_APID) {
++				printf("DAISY WLED #%u p%03x apid %u owner EE%u\n", pass, (unsigned)last,
++				    (unsigned)apid, in_rd(spmi_cnfg, 0x700u + 4u * apid) & 7u);
++			} else {
++				printf("DAISY WLED #%u p%03x not in arbiter map\n", pass, (unsigned)last);
++			}
++		}
++		for (unsigned reg = rng[i].lo; reg < rng[i].hi; reg += 8) {
++			char line[64];
++			unsigned n = 0;
++
++			for (unsigned k = 0; k < 8; k++) {
++				uint8_t v = 0;
++				int rc = vince_pmic_read(rng[i].ppid, reg + k, &v);
++
++				if (rc) {
++					n += (unsigned)snprintf(line + n, sizeof(line) - n, " e%d", rc);
++				} else {
++					n += (unsigned)snprintf(line + n, sizeof(line) - n, " %02x", (unsigned)v);
++				}
++			}
++			printf("DAISY WLED p%03x r%02x:%s\n", (unsigned)rng[i].ppid, reg, line);
++		}
++	}
++}
++
++static void
++daisy_wled_thread(void *arg, wait_result_t result)
++{
++	(void)arg;
++	(void)result;
++	in_sleep(&touch_chan, 8000);
++	for (unsigned pass = 0; pass < 3; pass++) {
++		if (pass) {
++			in_sleep(&touch_chan, 25000);
++		}
++		daisy_wled_dump(pass);
++	}
++	(void)thread_terminate(current_thread());
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
+ void
+ vince_input_start(void)
+ {
+@@ -1529,6 +1595,14 @@
+ 	(void)PE_parse_boot_argn("daisytouch_probe", &daisy_probe, sizeof(daisy_probe));
+ 	(void)PE_parse_boot_argn("daisytouch_diag", &daisy_diag, sizeof(daisy_diag));
+ 	(void)PE_parse_boot_argn("daisytouch_gpio", &daisy_gpio, sizeof(daisy_gpio));
++	(void)PE_parse_boot_argn("daisywled", &daisy_wled, sizeof(daisy_wled));
++	if (daisy_wled) {
++		thread_t wled_thread;
++
++		if (kernel_thread_start(daisy_wled_thread, NULL, &wled_thread) == KERN_SUCCESS) {
++			thread_deallocate(wled_thread);
++		}
++	}
+ 	(void)PE_parse_boot_argn("daisytouch_power", &daisy_power, sizeof(daisy_power));
+ 	(void)PE_parse_boot_argn("daisytouch_rpm_diag", &daisy_rpm_diag, sizeof(daisy_rpm_diag));
+ 	(void)PE_parse_boot_argn("daisytouch_reports", &daisy_reports, sizeof(daisy_reports));
+diff --git a/bsd/dev/vince_pmic.c b/bsd/dev/vince_pmic.c
+--- a/bsd/dev/vince_pmic.c
++++ b/bsd/dev/vince_pmic.c
+@@ -24,7 +24,7 @@
+ static struct {
+ 	unsigned ppid;
+ 	vm_offset_t chan;
+-} pmic_chan[8];
++} pmic_chan[16];
+ static unsigned pmic_nchan;
+ static lck_grp_t *pmic_grp;
+ static lck_mtx_t *pmic_lock;
