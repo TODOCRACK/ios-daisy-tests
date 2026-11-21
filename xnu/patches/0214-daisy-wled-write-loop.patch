@@ -71,15 +71,20 @@ diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
  	};
  	uint16_t last = 0;
  
-@@ -1567,6 +1614,19 @@
+@@ -1567,6 +1614,24 @@
  	(void)arg;
  	(void)result;
  	in_sleep(&touch_chan, 8000);
 +	if (daisy_wled_wopt) {
-+		/* prueba: 0x0040 (64/4095, muy oscuro). Escritura cada 2 s durante 60 s con lectura de vuelta. */
++		/* habilitación del modulador (Android lo pone a 0x80 con brillo > 0), una sola vez */
++		int re = daisy_wled_write(0x3d8, 0x46, 0x80);
++		uint8_t be = 0;
++		int qe = vince_pmic_read(0x3d8, 0x46, &be);
++		printf("DAISY WLED EN: w %d d846 %02x(q%d)\n", re, (unsigned)be, qe);
++		/* prueba: 0x0200 (512/4095, oscuro pero dentro del rango). Escritura cada 2 s durante 60 s. */
 +		for (unsigned i = 0; i < 30; i++) {
-+			int r1 = daisy_wled_write(0x3d9, 0x57, 0x40);
-+			int r2 = daisy_wled_write(0x3d9, 0x58, 0x00);
++			int r1 = daisy_wled_write(0x3d9, 0x57, 0x00);
++			int r2 = daisy_wled_write(0x3d9, 0x58, 0x02);
 +			uint8_t b1 = 0, b2 = 0;
 +			int q1 = vince_pmic_read(0x3d9, 0x57, &b1);
 +			int q2 = vince_pmic_read(0x3d9, 0x58, &b2);
@@ -91,7 +96,7 @@ diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
  	for (unsigned pass = 0; pass < 3; pass++) {
  		if (pass) {
  			in_sleep(&touch_chan, 25000);
-@@ -1596,6 +1656,7 @@
+@@ -1596,6 +1661,7 @@
  	(void)PE_parse_boot_argn("daisytouch_diag", &daisy_diag, sizeof(daisy_diag));
  	(void)PE_parse_boot_argn("daisytouch_gpio", &daisy_gpio, sizeof(daisy_gpio));
  	(void)PE_parse_boot_argn("daisywled", &daisy_wled, sizeof(daisy_wled));
