@@ -1,0 +1,25 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -1615,10 +1615,17 @@
+ 	(void)result;
+ 	in_sleep(&touch_chan, 8000);
+ 	if (daisy_wled_wopt) {
+-		/* brillo 15 = 241 = 0x0F1: LSB 0xF1 (0xD957), MSB 0x00 (0xD958) */
+-		int r1 = daisy_wled_write(0x3d9, 0x57, 0xf1);
+-		int r2 = daisy_wled_write(0x3d9, 0x58, 0x00);
+-		printf("DAISY WLED WRITE: lsb r%d msb r%d (241/4095)\n", r1, r2);
++		/* prueba: 0x0040 (64/4095, muy oscuro). Escritura cada 2 s durante 60 s con lectura de vuelta. */
++		for (unsigned i = 0; i < 30; i++) {
++			int r1 = daisy_wled_write(0x3d9, 0x57, 0x40);
++			int r2 = daisy_wled_write(0x3d9, 0x58, 0x00);
++			uint8_t b1 = 0, b2 = 0;
++			int q1 = vince_pmic_read(0x3d9, 0x57, &b1);
++			int q2 = vince_pmic_read(0x3d9, 0x58, &b2);
++			printf("DAISY WLED LOOP %u: w %d/%d rb lsb %02x(q%d) msb %02x(q%d)\n",
++			    i, r1, r2, (unsigned)b1, q1, (unsigned)b2, q2);
++			in_sleep(&touch_chan, 2000);
++		}
+ 	}
+ 	for (unsigned pass = 0; pass < 3; pass++) {
+ 		if (pass) {
