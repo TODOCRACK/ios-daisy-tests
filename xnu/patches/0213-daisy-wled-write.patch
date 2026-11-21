@@ -5,7 +5,7 @@ diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
  static int daisy_rpm_diag, daisy_reports, daisy_trace, daisy_busywait;
  static int daisy_hid;
  static int daisy_wled;
-+static int daisy_wled_write;
++static int daisy_wled_wopt;
  static uint32_t qup_last_bus_error, qup_last_error;
  
  static uint32_t
@@ -75,7 +75,7 @@ diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
  	(void)arg;
  	(void)result;
  	in_sleep(&touch_chan, 8000);
-+	if (daisy_wled_write) {
++	if (daisy_wled_wopt) {
 +		/* brillo 15 = 241 = 0x0F1: LSB 0xF1 (0xD957), MSB 0x00 (0xD958) */
 +		int r1 = daisy_wled_write(0x3d9, 0x57, 0xf1);
 +		int r2 = daisy_wled_write(0x3d9, 0x58, 0x00);
@@ -88,7 +88,7 @@ diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
  	(void)PE_parse_boot_argn("daisytouch_diag", &daisy_diag, sizeof(daisy_diag));
  	(void)PE_parse_boot_argn("daisytouch_gpio", &daisy_gpio, sizeof(daisy_gpio));
  	(void)PE_parse_boot_argn("daisywled", &daisy_wled, sizeof(daisy_wled));
-+	(void)PE_parse_boot_argn("daisywledw", &daisy_wled_write, sizeof(daisy_wled_write));
++	(void)PE_parse_boot_argn("daisywledw", &daisy_wled_wopt, sizeof(daisy_wled_wopt));
  	if (daisy_wled) {
  		thread_t wled_thread;
  
