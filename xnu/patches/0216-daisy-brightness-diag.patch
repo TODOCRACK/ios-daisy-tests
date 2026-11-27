@@ -1,0 +1,71 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -1620,15 +1620,24 @@
+ 		uint8_t be = 0;
+ 		int qe = vince_pmic_read(0x3d8, 0x46, &be);
+ 		printf("DAISY WLED EN: w %d d846 %02x(q%d)\n", re, (unsigned)be, qe);
+-		/* prueba: 0x0200 (512/4095, oscuro pero dentro del rango). Escritura cada 2 s durante 60 s. */
++		/* three WLED strings (Android moves all three), stepped levels so the effect is visible:
++		 * 0x0800 for ~20 s, 0x0200 for ~20 s, 0x0100 for ~20 s. Written every 2 s with read-back. */
+ 		for (unsigned i = 0; i < 30; i++) {
+-			int r1 = daisy_wled_write(0x3d9, 0x57, 0x00);
+-			int r2 = daisy_wled_write(0x3d9, 0x58, 0x02);
+-			uint8_t b1 = 0, b2 = 0;
+-			int q1 = vince_pmic_read(0x3d9, 0x57, &b1);
+-			int q2 = vince_pmic_read(0x3d9, 0x58, &b2);
+-			printf("DAISY WLED LOOP %u: w %d/%d rb lsb %02x(q%d) msb %02x(q%d)\n",
+-			    i, r1, r2, (unsigned)b1, q1, (unsigned)b2, q2);
++			unsigned lvl = i < 10 ? 0x0800u : (i < 20 ? 0x0200u : 0x0100u);
++			uint8_t lo = (uint8_t)(lvl & 0xffu), hi = (uint8_t)(lvl >> 8);
++			int w = 0;
++			uint8_t rl[3] = { 0, 0, 0 }, rh[3] = { 0, 0, 0 };
++			static const uint8_t sreg[3] = { 0x57, 0x67, 0x77 };
++
++			for (unsigned k = 0; k < 3; k++) {
++				w += daisy_wled_write(0x3d9, sreg[k], lo) ? 1 : 0;
++				w += daisy_wled_write(0x3d9, (uint8_t)(sreg[k] + 1), hi) ? 1 : 0;
++				(void)vince_pmic_read(0x3d9, sreg[k], &rl[k]);
++				(void)vince_pmic_read(0x3d9, (uint8_t)(sreg[k] + 1), &rh[k]);
++			}
++			printf("DAISY WLED LOOP %u lvl %04x: werr %d rb %02x%02x %02x%02x %02x%02x\n",
++			    i, lvl, w, (unsigned)rh[0], (unsigned)rl[0], (unsigned)rh[1], (unsigned)rl[1],
++			    (unsigned)rh[2], (unsigned)rl[2]);
+ 			in_sleep(&touch_chan, 2000);
+ 		}
+ 	}
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -858,6 +858,9 @@
+ }
+ 
+ static uint64_t sweet_fb_logged;        /* selectors already logged (< 64) */
++static uint64_t sweet_fb_last0[64], sweet_fb_last1[64];
++static bool sweet_fb_seen[64];
++static uint16_t sweet_fb_nval[64];
+ 
+ IOReturn
+ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
+@@ -954,6 +957,21 @@
+ 		    args->scalarInputCount, args->structureInputSize,
+ 		    args->scalarOutputCount, args->structureOutputSize, ret);
+ 	}
++	/* diagnostic: log the scalar inputs every time they change (max 16 lines per selector) */
++	if (selector < 64 && args->scalarInputCount >= 1 && sweet_fb_nval[selector] < 16) {
++		uint64_t v0 = args->scalarInput[0];
++		uint64_t v1 = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0;
++		if (!sweet_fb_seen[selector] || sweet_fb_last0[selector] != v0 || sweet_fb_last1[selector] != v1) {
++			char vname[32];
++			sweet_fb_seen[selector] = true;
++			sweet_fb_last0[selector] = v0;
++			sweet_fb_last1[selector] = v1;
++			sweet_fb_nval[selector]++;
++			proc_selfname(vname, sizeof(vname));
++			IOLog("SWEET FB: VAL %s sel %u n%u v0 0x%llx v1 0x%llx\n", vname, selector,
++			    args->scalarInputCount, v0, v1);
++		}
++	}
+ 	return ret;
+ }
+ #endif /* SWEET */
